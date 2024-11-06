@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digiderius</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f4f8;
+            color: #333;
+            margin: 0;
+            height: 100vh;
+            padding: 20px;
+        }
+        h2 {
+            font-size: 2em;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+        button {
+            margin: 10px;
+            padding: 12px 24px;
+            font-size: 16px;
+            color: white;
+            background-color: #3498db;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+        audio {
+            margin-top: 20px;
+            width: 100%;
+            max-width: 600px;
+        }
+        #responseText {
+            margin-top: 20px;
+            font-size: 18px;
+            color: #2c3e50;
+        }
+        @media (max-width: 600px) {
+            button {
+                width: 100%;
+                padding: 10px;
+            }
+            h2 {
+                font-size: 1.5em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h2>Talk to ELM</h2>
+    <button id="recordBtn">Start Recording</button>
+    <button id="sendBtn" disabled>Send Audio</button>
+    <audio id="audioPlayer" controls></audio>
+    <div id="userText"></div>
+    <div></div>
+    <div id="assistantText"></div>
+
+    <script>
+        const recordBtn = document.getElementById("recordBtn");
+        const sendBtn = document.getElementById("sendBtn");
+        const audioPlayer = document.getElementById("audioPlayer");
+        const assistantText = document.getElementById("assistantText");
+        const userText = document.getElementById("userText");
+        
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        recordBtn.addEventListener("click", async () => {
+            if (!isRecording) {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    sendBtn.disabled = false;
+                };
+
+                audioChunks = [];
+                mediaRecorder.start();
+                recordBtn.textContent = "Stop Recording";
+                isRecording = true;
+            } else {
+                mediaRecorder.stop();
+                recordBtn.textContent = "Start Recording";
+                isRecording = false;
+            }
+        });
+
+        sendBtn.addEventListener("click", async () => {
+            const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
+            const formData = new FormData();
+            formData.append("file", audioBlob, "recorded_audio.wav");
+
+            try {
+                const response = await fetch("http://127.0.0.1:8080/process_audio", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error("Failed to process audio");
+                }
+
+                const jsonResponse = await response.json();
+                if (jsonResponse.error) {
+                    alert(jsonResponse.error);
+                } else {
+                    userText.textContent = jsonResponse.user;
+                    assistantText.textContent = jsonResponse.assistant;
+                    audioPlayer.src = jsonResponse.audio_url;
+                    audioPlayer.play();
+                }
+            } catch (error) {
+                console.error("Error:", error);
+                alert("An error occurred while processing the audio.");
+            }
+        });
+    </script>
+</body>
+</html>
