@@ -145,5 +145,5 @@ async def process_audio(file: UploadFile = File(...)):
         return JSONResponse(content={"user":'',"assistant": error_msg, "audio_url": f"/{output_file_path}"})
 
 
-app.mount("/asr", app)
+app.mount("/digiderius", app)
 app.mount("/", StaticFiles(directory="ui", html=True), name="ui")
