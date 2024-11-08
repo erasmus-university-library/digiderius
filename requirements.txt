@@ -4,3 +4,4 @@ fastapi
 silero-vad
 piper-tts
 langdetect
+openai
