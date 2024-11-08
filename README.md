@@ -20,8 +20,8 @@ wget -i ../downloads.txt
 python3 cli.py \
 --host=127.0.0.1 \
 --port=8080 \
---OPENAI_API_URL "http://127.0.0.1:8000/v1" \ 
---OPENAI_API_KEY "sk-my-secret-key"
+--OPENAI_API_URL="http://127.0.0.1:8000/v1" \ 
+--OPENAI_API_KEY="sk-my-secret-key"
 ```
 
 Next, navigate to http://127.0.0.1:8080/ and start talking. 
