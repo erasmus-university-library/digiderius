@@ -50,6 +50,46 @@
             font-size: 18px;
             color: #2c3e50;
         }
+        #modelList, #configForm {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+        #modelDropdown {
+            margin-top: 20px;
+            padding: 10px;
+            font-size: 16px;
+            background-color: #ecf0f1;
+            border: 1px solid #bdc3c7;
+            border-radius: 5px;
+        }
+        input[type="number"] {
+            padding: 8px;
+            margin: 5px;
+            font-size: 16px;
+            width: 100%;
+            max-width: 200px;
+        }
+        label {
+            margin-top: 10px;
+            display: block;
+        }
+        #loading {
+            margin-top: 20px;
+            font-size: 18px;
+            color: #e67e22;
+        }
+        .spinner {
+            border: 4px solid #f0f4f8;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
         @media (max-width: 600px) {
             button {
                 width: 100%;
@@ -64,22 +104,80 @@
 <body>
     <h2>Talk to ELM</h2>
     <button id="recordBtn">Start Recording</button>
-    <button id="sendBtn" disabled>Send Audio</button>
+
     <audio id="audioPlayer" controls></audio>
+
+    
+    <!-- Loading Animation -->
+    <div id="loading" style="display: none;">
+        <div class="spinner"></div> Generating response...
+    </div>
+    
+    <!-- Model Dropdown -->
+    <h2>Models:</h2>
+    <select id="modelDropdown"></select>
+    
+    <!-- Form for Generation Arguments -->
+    <div id="configForm">
+        <h3>Configure Generation Arguments</h3>
+        <label for="max_completion_tokens">Max New Tokens:</label>
+        <input type="number" id="max_completion_tokens" value="128" min="1">
+        
+        <label for="temperature">Temperature:</label>
+        <input type="number" id="temperature" value="0.8" step="0.1" min="0.0" max="2">
+        
+        <label for="topP">Top P:</label>
+        <input type="number" id="topP" value="1.0" step="0.1" min="0.0" max="1">
+    </div>
+    <h2>Your question:</h2>
     <div id="userText"></div>
-    <div></div>
+    <h2>Assistant:</h2>
     <div id="assistantText"></div>
 
     <script>
         const recordBtn = document.getElementById("recordBtn");
-        const sendBtn = document.getElementById("sendBtn");
         const audioPlayer = document.getElementById("audioPlayer");
         const assistantText = document.getElementById("assistantText");
         const userText = document.getElementById("userText");
-        
+        const modelDropdown = document.getElementById("modelDropdown");
+        const loading = document.getElementById("loading");
+
+        const max_completion_tokens = document.getElementById("max_completion_tokens");
+        const temperatureInput = document.getElementById("temperature");
+        const topPInput = document.getElementById("topP");
+
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
+        let selectedModel = null;
+
+        // Automatically fetch models on page load
+        window.onload = async () => {
+            await fetchModels();
+        };
+
+        async function fetchModels() {
+            try {
+                const response = await fetch("http://127.0.0.1:8080/models", { method: "POST" });
+                if (!response.ok) throw new Error("Failed to fetch models");
+
+                const data = await response.json();
+                if (data.models && data.models.length > 0) {
+                    modelDropdown.innerHTML = "";
+                    data.models.forEach(model => {
+                        const option = document.createElement("option");
+                        option.value = model.id;
+                        option.textContent = `${model.id} (Owned by: ${model.owned_by})`;
+                        modelDropdown.appendChild(option);
+                    });
+                    selectedModel = modelDropdown.value;
+                } else {
+                    alert("No models found.");
+                }
+            } catch (error) {
+                console.error("Error:", error);
+            }
+        }
 
         recordBtn.addEventListener("click", async () => {
             if (!isRecording) {
@@ -90,8 +188,8 @@
                     audioChunks.push(event.data);
                 };
 
-                mediaRecorder.onstop = () => {
-                    sendBtn.disabled = false;
+                mediaRecorder.onstop = async () => {
+                    await sendAudio();
                 };
 
                 audioChunks = [];
@@ -105,20 +203,34 @@
             }
         });
 
-        sendBtn.addEventListener("click", async () => {
+        async function sendAudio() {
+            if (!selectedModel) {
+                alert("Please select a model before sending audio.");
+                return;
+            }
+
+            const generationArgs = {
+                max_completion_tokens: parseInt(max_completion_tokens.value),
+                temperature: parseFloat(temperatureInput.value),
+                top_p: parseFloat(topPInput.value)
+            };
+
             const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
             const formData = new FormData();
             formData.append("file", audioBlob, "recorded_audio.wav");
+            formData.append("model", selectedModel);
+            formData.append("generation_args", JSON.stringify(generationArgs));
 
             try {
+                loading.style.display = "flex"; // Show loading animation
                 const response = await fetch("http://127.0.0.1:8080/process_audio", {
                     method: "POST",
                     body: formData
                 });
 
-                if (!response.ok) {
-                    throw new Error("Failed to process audio");
-                }
+                loading.style.display = "none"; // Hide loading animation
+
+                if (!response.ok) throw new Error("Failed to process audio");
 
                 const jsonResponse = await response.json();
                 if (jsonResponse.error) {
@@ -132,8 +244,9 @@
             } catch (error) {
                 console.error("Error:", error);
                 alert("An error occurred while processing the audio.");
+                loading.style.display = "none"; // Hide loading animation on error
             }
-        });
+        }
     </script>
 </body>
 </html>

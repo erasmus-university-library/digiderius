@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Request
+from fastapi import FastAPI, UploadFile, File, Request, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from silero_vad import load_silero_vad, read_audio, save_audio, get_speech_timestamps, collect_chunks
@@ -11,69 +11,54 @@ import os
 import time
 import shutil
 from tempfile import NamedTemporaryFile
-
+from openai import OpenAI
+import json
 app = FastAPI()
 
 # Load configurations from environment variables
-hf_token = os.getenv("HF_TOKEN")
-model_name = os.getenv("MODEL_NAME", "meta-llama/Llama-3.2-1B-Instruct")
 sampling_rate = int(os.getenv("SAMPLING_RATE", 16000))
+OPENAI_API_URL = os.getenv("OPENAI_API_URL","http://127.0.0.1:8000/v1")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY","sk-my-secret-key")
+DEVICE = os.getenv("DEVICE","cpu")
+
+# Setup OpenAI client
+client = OpenAI(
+    base_url=OPENAI_API_URL,
+    api_key=OPENAI_API_KEY,
+)
 
 # Load Silero VAD model
 vad_model = load_silero_vad()
 
 # Load Whisper ASR model
-
 def load_asr_pipe():
     asr_pipe = pipeline(
         "automatic-speech-recognition",
         model="openai/whisper-small",
         chunk_length_s=30,
-        device="cpu",
+        device=DEVICE,
     )
     return asr_pipe
 
 # Load TTS models
 def load_tts_models():
     eng_model = "./tts_models/en_US-lessac-medium.onnx"
-    eng_voice = PiperVoice.load(eng_model,use_cuda=False)
-
     nl_model = "./tts_models/nl_BE-nathalie-medium.onnx"
-    nl_voice = PiperVoice.load(nl_model,use_cuda=False)
-
+    
+    if DEVICE == 'cuda':
+        nl_voice = PiperVoice.load(nl_model,use_cuda=True)
+        eng_voice = PiperVoice.load(eng_model,use_cuda=True)
+    else:
+        nl_voice = PiperVoice.load(nl_model,use_cuda=False)
+        eng_voice = PiperVoice.load(eng_model,use_cuda=False)    
+    
     voice_models = {
         'en': eng_voice,
         'nl': nl_voice
     }
     return voice_models
 
-# Load LLM model pipeline
-def load_llm_pipe():
-    quantization_config = BitsAndBytesConfig(load_in_4bit=True,
-                                             bnb_4bit_compute_dtype=torch.bfloat16,
-                                             bnb_4bit_use_double_quant=True,
-                                             bnb_4bit_quant_type="nf4")
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name, device_map="auto", torch_dtype=torch.bfloat16, quantization_config=quantization_config,
-        token=hf_token
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
-    pipe = pipeline(
-        "text-generation", 
-        model=model,
-        tokenizer=tokenizer
-    )
-    return pipe
 
-generation_args = { 
-    "max_new_tokens": 512, 
-    "return_full_text": False, 
-    "temperature": 1.0, 
-    "do_sample": True, 
-    "repetition_penalty": 1.2
-} 
-
-llm_pipe = load_llm_pipe()
 asr_pipe = load_asr_pipe()
 voice_models = load_tts_models()
 
@@ -95,13 +80,22 @@ def detect_voice(audio_data: bytes):
         save_audio(output_audio_file.name, speech_audio, sampling_rate=sampling_rate)
         return output_audio_file.name
 
+
+@app.post("/models")
+async def list_models():
+    models = [i.dict() for i in client.models.list()]
+    return JSONResponse(content={"models": models})
+    
 @app.post("/process_audio")
-async def process_audio(file: UploadFile = File(...)):
+async def process_audio(file: UploadFile = File(...), generation_args: str = Form(...) ,model: str = None, ):
     # Read uploaded audio file
     audio_data = await file.read()
     
     # Run VAD to get speech-only audio
     speech_audio_path = detect_voice(audio_data)
+
+    # generation args = 
+    generation_args = json.loads(generation_args)
     if speech_audio_path:
         # Transcribe speech-only audio
         transcribed = asr_pipe(speech_audio_path)
@@ -111,10 +105,14 @@ async def process_audio(file: UploadFile = File(...)):
         messages = [
             {"role": "user", "content": transcription_text}
         ]
-        
-        answer = llm_pipe(messages, **generation_args)[0]
-        generated_text = answer['generated_text']
-        
+
+        generated_text = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature= generation_args['temperature'],
+            top_p= generation_args['top_p'],
+            max_completion_tokens = generation_args['max_completion_tokens']).choices[0].message.content
+
         # Detect language for TTS
         language = detect(generated_text)
         if language not in voice_models:
